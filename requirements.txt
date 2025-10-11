@@ -13,3 +13,4 @@ seaborn
 streamlit>=1.32.0
 timm
 git+https://github.com/jacobgil/pytorch-grad-cam.git
+python-dotenv

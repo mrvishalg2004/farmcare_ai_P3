@@ -18,6 +18,10 @@ import sys
 import json
 import argparse
 import time
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 from typing import Dict, Any, Optional, List, Tuple
 
 try:
@@ -220,7 +224,7 @@ def main():
     # Get API key from arguments or environment variable
     api_key = args.key
     if not api_key:
-        api_key = os.environ.get('GOOGLE_API_KEY')
+        api_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
         
     if not api_key:
         print("Error: No API key provided.", file=sys.stderr)

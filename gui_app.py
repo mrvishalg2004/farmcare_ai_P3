@@ -18,6 +18,10 @@ import io
 import time
 import random
 import base64
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # -----------------------------
 # 🌐 Multi-Language Support
@@ -41,7 +45,7 @@ LANGUAGES = {
 # -----------------------------
 # 🤖 Gemini AI Chatbot Configuration
 # -----------------------------
-GEMINI_API_KEY = "AIzaSyBAVBN3olujdDv17fKNfiFScGZsC2I38oQ"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # Configure the Gemini AI
 genai.configure(api_key=GEMINI_API_KEY)

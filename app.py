@@ -18,6 +18,11 @@ import torch.nn.functional as F
 from pytorch_grad_cam import GradCAM, GradCAMPlusPlus, XGradCAM, EigenCAM, LayerCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 import warnings
 warnings.filterwarnings('ignore')
 import streamlit.components.v1 as components
@@ -47,7 +52,14 @@ LANGUAGES = {
 # -----------------------------
 # 🤖 Gemini AI Chatbot Configuration
 # -----------------------------
-GEMINI_API_KEY = "AIzaSyBAVBN3olujdDv17fKNfiFScGZsC2I38oQ"
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Get API keys from environment variables
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)  # Using default configuration
 
 # Language translations dictionary
@@ -500,10 +512,10 @@ def get_text(key, lang='en', **kwargs):
     return text
 
 # -----------------------------
-# Gemini AI API Key
+# Gemini AI API Configuration
 # -----------------------------
-GEMINI_API_KEY = "AIzaSyBAVBN3olujdDv17fKNfiFScGZsC2I38oQ" # Replace with your actual key
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_API_URL = os.environ.get("GEMINI_API_URL")
 
 # -----------------------------
 # Plant Disease Classes (38 classes)
