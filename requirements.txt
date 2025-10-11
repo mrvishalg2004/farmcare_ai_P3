@@ -1,0 +1,15 @@
+flask
+torch==2.8.0
+torchvision==0.23.0
+numpy
+pillow
+opencv-python-headless
+google-generativeai
+langdetect
+requests
+plotly
+matplotlib
+seaborn
+streamlit>=1.32.0
+timm
+git+https://github.com/jacobgil/pytorch-grad-cam.git
