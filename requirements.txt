@@ -4,8 +4,7 @@ torchvision==0.23.0
 numpy
 pillow
 opencv-python-headless
-google-generativeai
-langdetect
+# Removed chatbot dependencies
 requests
 plotly
 matplotlib

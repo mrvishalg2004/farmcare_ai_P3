@@ -13,7 +13,6 @@ import seaborn as sns
 import cv2
 import plotly.express as px
 import plotly.graph_objects as go
-import os
 from plotly.subplots import make_subplots
 import torch.nn.functional as F
 from pytorch_grad_cam import GradCAM, GradCAMPlusPlus, XGradCAM, EigenCAM, LayerCAM
@@ -28,8 +27,6 @@ import warnings
 warnings.filterwarnings('ignore')
 import streamlit.components.v1 as components
 import json
-import pathlib
-import base64
 
 # -----------------------------
 # 🌐 Multi-Language Support
@@ -118,10 +115,6 @@ TRANSLATIONS = {
         'check_format': '- Check if the image format is supported (JPG, PNG)',
         'feature_importance': '🎯 Input Feature Importance',
         'confidence_distribution': '📈 Confidence Distribution Analysis',
-        'intensity_analysis': '🔍 Attention Intensity Analysis',
-        'intensity_description': 'This analysis shows how intensely the AI model is focusing on different parts of the image.',
-        'intensity_stats': '📊 Intensity Statistics',
-        'attention_distribution': '🎯 Attention Distribution',
         'very_high': 'Very High (80-100%)',
         'high': 'High (60-80%)',
         'medium': 'Medium (40-60%)',
@@ -562,56 +555,14 @@ CLASS_NAMES = [
 # -----------------------------
 @st.cache_resource
 def load_model():
-    model_path = "plant_disease_model_final.pth"
-    # Check if the model file exists
-    if not os.path.exists(model_path):
-        st.error(f"Model file '{model_path}' not found. Please make sure the model file is in the same directory as the script.")
-        st.info("Looking for model files in the current directory...")
-        
-        # List .pth files in the current directory
-        pth_files = [f for f in os.listdir(".") if f.endswith(".pth")]
-        if pth_files:
-            st.info(f"Found these model files: {', '.join(pth_files)}")
-            # Try to use the first available .pth file
-            model_path = pth_files[0]
-            st.info(f"Attempting to use '{model_path}' instead")
-        else:
-            st.error("No .pth model files found in the current directory.")
-            # Return a dummy model to avoid crashing
-            dummy_model = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=len(CLASS_NAMES))
-            dummy_model.eval()
-            return dummy_model
-    
-    try:
-        # First load the state_dict to check its shape
-        state_dict = torch.load(model_path, map_location="cpu")
-        
-        # Check the shape of the classifier layer to determine number of classes in the saved model
-        if 'head.weight' in state_dict:
-            num_classes_in_checkpoint = state_dict['head.weight'].shape[0]
-            print(f"Detected {num_classes_in_checkpoint} classes in the model checkpoint")
-        else:
-            # If we can't determine the number of classes, use the length of CLASS_NAMES
-            num_classes_in_checkpoint = len(CLASS_NAMES)
-        
-        # Create the model with the correct number of classes
-        model = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=num_classes_in_checkpoint)
-        model.load_state_dict(state_dict)
-        model.eval()
-        return model
-    except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
-        # Return a dummy model to avoid crashing
-        dummy_model = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=len(CLASS_NAMES))
-        dummy_model.eval()
-        return dummy_model
+    model = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=len(CLASS_NAMES))
+    # Ensure the model file 'plant_disease_model_final.pth' is in the same directory
+    state_dict = torch.load("plant_disease_model_final.pth", map_location="cpu")
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
 
-# Load the model once when the app starts
 model = load_model()
-
-# Create a mapping from the model's classes to our CLASS_NAMES if needed
-# This is a placeholder - you'll need to update this with the actual mapping
-# between the 10 classes in your saved model and the 38 classes in CLASS_NAMES
 
 # -----------------------------
 # Preprocessing
@@ -652,7 +603,7 @@ def get_confidence_level(confidence_score, entropy_score):
 # -----------------------------
 
 def generate_gradcam_heatmap(model, image_tensor, target_class_idx, image_rgb):
-    """Generate GradCAM heatmap for model interpretation with intensity analysis"""
+    """Generate GradCAM heatmap for model interpretation"""
     try:
         possible_target_layers = [
             [model.head],
@@ -672,18 +623,7 @@ def generate_gradcam_heatmap(model, image_tensor, target_class_idx, image_rgb):
                 
                 cam_image = show_cam_on_image(rgb_img_resized, grayscale_cam, use_rgb=True)
                 
-                # Calculate intensity statistics
-                intensity_stats = {
-                    'max_intensity': float(np.max(grayscale_cam)),
-                    'min_intensity': float(np.min(grayscale_cam)),
-                    'mean_intensity': float(np.mean(grayscale_cam)),
-                    'std_intensity': float(np.std(grayscale_cam)),
-                    'high_attention_pixels': float(np.sum(grayscale_cam > 0.5) / grayscale_cam.size * 100),
-                    'medium_attention_pixels': float(np.sum((grayscale_cam > 0.3) & (grayscale_cam <= 0.5)) / grayscale_cam.size * 100),
-                    'low_attention_pixels': float(np.sum(grayscale_cam <= 0.3) / grayscale_cam.size * 100)
-                }
-                
-                return cam_image, grayscale_cam, intensity_stats
+                return cam_image, grayscale_cam
                 
             except Exception as layer_error:
                 continue
@@ -696,7 +636,7 @@ def generate_gradcam_heatmap(model, image_tensor, target_class_idx, image_rgb):
         return generate_alternative_heatmap(model, image_tensor, target_class_idx, image_rgb)
 
 def generate_alternative_heatmap(model, image_tensor, target_class_idx, image_rgb):
-    """Generate alternative heatmap using gradient-based method with intensity analysis"""
+    """Generate alternative heatmap using gradient-based method"""
     try:
         image_tensor.requires_grad_(True)
         output = model(image_tensor)
@@ -718,94 +658,18 @@ def generate_alternative_heatmap(model, image_tensor, target_class_idx, image_rg
         cam_image = alpha * heatmap_colored + (1 - alpha) * rgb_img_resized
         cam_image = np.clip(cam_image, 0, 1)
         
-        # Calculate intensity statistics for alternative method
-        intensity_stats = {
-            'max_intensity': float(np.max(heatmap_resized)),
-            'min_intensity': float(np.min(heatmap_resized)),
-            'mean_intensity': float(np.mean(heatmap_resized)),
-            'std_intensity': float(np.std(heatmap_resized)),
-            'high_attention_pixels': float(np.sum(heatmap_resized > 0.5) / heatmap_resized.size * 100),
-            'medium_attention_pixels': float(np.sum((heatmap_resized > 0.3) & (heatmap_resized <= 0.5)) / heatmap_resized.size * 100),
-            'low_attention_pixels': float(np.sum(heatmap_resized <= 0.3) / heatmap_resized.size * 100)
-        }
-        
-        return cam_image, heatmap_resized, intensity_stats
+        return cam_image, heatmap_resized
         
     except Exception as e:
         st.error(f"Alternative heatmap generation failed: {str(e)}")
-        return None, None, None
-
-def create_intensity_analysis_chart(grayscale_cam, intensity_stats):
-    """Create intensity analysis visualization for GradCAM"""
-    fig = go.Figure()
-    
-    # Flatten the heatmap for histogram
-    flat_intensities = grayscale_cam.flatten()
-    
-    # Create histogram
-    fig.add_trace(go.Histogram(
-        x=flat_intensities,
-        nbinsx=50,
-        name='Intensity Distribution',
-        marker_color='rgba(55, 83, 109, 0.7)',
-        marker_line=dict(color='rgba(55, 83, 109, 1.0)', width=1)
-    ))
-    
-    # Add vertical lines for statistics
-    fig.add_vline(x=intensity_stats['mean_intensity'], line_dash="dash", 
-                  line_color="red", annotation_text=f"Mean: {intensity_stats['mean_intensity']:.3f}")
-    fig.add_vline(x=intensity_stats['max_intensity'], line_dash="dot", 
-                  line_color="green", annotation_text=f"Max: {intensity_stats['max_intensity']:.3f}")
-    
-    fig.update_layout(
-        title="GradCAM Intensity Distribution",
-        xaxis_title="Attention Intensity",
-        yaxis_title="Pixel Count",
-        showlegend=False,
-        height=300,
-        margin=dict(t=50, b=40, l=40, r=40)
-    )
-    
-    return fig
-
-def create_attention_pie_chart(intensity_stats):
-    """Create pie chart showing attention level distribution"""
-    labels = ['High Attention (>50%)', 'Medium Attention (30-50%)', 'Low Attention (<30%)']
-    values = [
-        intensity_stats['high_attention_pixels'],
-        intensity_stats['medium_attention_pixels'],
-        intensity_stats['low_attention_pixels']
-    ]
-    colors = ['#FF6B6B', '#FFE66D', '#95E1D3']
-    
-    fig = go.Figure(data=[go.Pie(
-        labels=labels, 
-        values=values,
-        marker=dict(colors=colors, line=dict(color='#FFFFFF', width=2)),
-        hovertemplate='<b>%{label}</b><br>Percentage: %{value:.1f}%<extra></extra>'
-    )])
-    
-    fig.update_layout(
-        title="Model Attention Distribution",
-        height=300,
-        margin=dict(t=50, b=40, l=40, r=40),
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
-    )
-    
-    return fig
+        return None, None
 
 def create_confidence_radar_chart(probs, class_names, top_k=8):
     """Create radar chart for top predictions"""
-    # Make sure we're working with the latest data
-    probs_detached = probs.detach().clone()
-    
-    # Get top predictions
-    top_indices = torch.topk(probs_detached, min(top_k, len(class_names))).indices
-    top_probs = probs_detached[top_indices].numpy() * 100
+    top_indices = torch.topk(probs, top_k).indices
+    top_probs = probs[top_indices].numpy() * 100
     top_classes = [class_names[i] for i in top_indices]
     
-    # Clean up class names for display
     clean_names = []
     for name in top_classes:
         if '___' in name:
@@ -815,61 +679,26 @@ def create_confidence_radar_chart(probs, class_names, top_k=8):
             clean_name = name.replace('_', ' ')
         clean_names.append(clean_name)
     
-    # Create the radar chart
     fig = go.Figure()
-    
-    # Use different colors based on confidence levels
-    colors = []
-    for prob in top_probs:
-        if prob > 50:
-            colors.append('rgb(220, 20, 60)')  # High confidence - red
-        elif prob > 20:
-            colors.append('rgb(255, 165, 0)')  # Medium confidence - orange
-        else:
-            colors.append('rgb(34, 139, 34)')  # Low confidence - green
     
     fig.add_trace(go.Scatterpolar(
         r=top_probs,
         theta=clean_names,
         fill='toself',
         name='Confidence %',
-        line=dict(color='rgb(34, 139, 34)', width=2),
-        fillcolor='rgba(34, 139, 34, 0.3)',
-        marker=dict(
-            size=8,
-            color=colors,
-            line=dict(color='white', width=1)
-        ),
-        hovertemplate='<b>%{theta}</b><br>Confidence: %{r:.2f}%<extra></extra>'
+        line_color='rgb(34, 139, 34)',
+        fillcolor='rgba(34, 139, 34, 0.3)'
     ))
-    
-    # Calculate a dynamic range for better visualization
-    max_prob = max(top_probs) if len(top_probs) > 0 else 100
-    range_max = max(max_prob + 10, 50)  # Ensure minimum range of 50%
     
     fig.update_layout(
         polar=dict(
             radialaxis=dict(
                 visible=True,
-                range=[0, range_max],
-                ticksuffix='%',
-                showticklabels=True,
-                gridcolor='lightgray'
-            ),
-            angularaxis=dict(
-                tickfont_size=10,
-                rotation=90
-            )
-        ),
+                range=[0, max(top_probs) + 10]
+            )),
         showlegend=True,
-        title=dict(
-            text="Top Predictions - Confidence Radar",
-            x=0.5,
-            font=dict(size=16)
-        ),
-        font=dict(size=12),
-        height=500,
-        margin=dict(t=80, b=40, l=40, r=40)
+        title="Top Predictions - Confidence Radar",
+        font=dict(size=12)
     )
     
     return fig
@@ -1077,55 +906,14 @@ st.set_page_config(
     layout="wide"
 )
 
-# -----------------------------
-# Floating Chatbot Button Component
-# -----------------------------
-
-def add_chatbot_button():
-    """Add the floating chatbot button to the app using multiple fallback methods"""
-    
-    # Method 1: Direct HTML/CSS method
-    chatbot_html = """
-    <div style="position: fixed; bottom: 20px; right: 20px; z-index: 9999;">
-        <a href="https://farmcareaichatbot.vercel.app/" target="_blank"
-           style="background-color: #4CAF50; 
-                  color: white; 
-                  border-radius: 30px;
-                  padding: 12px 20px;
-                  text-align: center;
-                  text-decoration: none;
-                  display: inline-block;
-                  font-size: 16px;
-                  font-weight: bold;
-                  font-family: Arial, sans-serif;
-                  cursor: pointer;
-                  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-                  transition: all 0.3s ease;">
-            Chat with AI 🤖
-        </a>
-    </div>
-    """
-    st.markdown(chatbot_html, unsafe_allow_html=True)
-    
-    # Method 2: External JS for more advanced behavior (as fallback)
-    try:
-        js_path = pathlib.Path("chatbot_button.js").absolute()
-        with open(js_path, "r", encoding="utf-8") as js_file:
-            chatbot_js = js_file.read()
-        components.html(f"<script>{chatbot_js}</script>", height=0)
-    except Exception:
-        pass
-
 # Initialize chat widget state in session
 if 'enable_tawk' not in st.session_state:
     st.session_state.enable_tawk = True
 
+
 # -----------------------------
 # Language Selection Sidebar
 # -----------------------------
-# Add the chatbot button
-add_chatbot_button()
-
 st.sidebar.markdown("### 🌐 Language / भाषा / मराठी / 语言")
 selected_language = st.sidebar.selectbox(
     "Choose your language / भाषा निवडा / भाषा निवडा:",
@@ -1342,21 +1130,9 @@ if uploaded_file is not None:
             progress_bar.progress((i + 1) / len(analysis_steps))
             time.sleep(0.3)
 
-        # Reset seed to ensure randomness doesn't affect predictions
-        torch.manual_seed(int(time.time()))
-        
-        # Preprocess the image and prepare for model input
         img_tensor = transform(image).unsqueeze(0)
-        
-        # Perform model inference with fresh processing
         with torch.no_grad():
-            # Clear any cached computations
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
-            
-            # Run the model
             outputs = model(img_tensor)
-            
-            # Process the model outputs
             probs = calibrate_confidence(outputs, temperature=1.5)[0]
             confidence, pred_class = torch.max(probs, 0)
             is_reliable, entropy_score = validate_prediction_quality(probs)
@@ -1450,16 +1226,11 @@ if uploaded_file is not None:
         st.write(get_text("gradcam_description", current_lang))
         
         with st.spinner(get_text('generating_heatmap', current_lang)):
-            result = generate_gradcam_heatmap(model, img_tensor, pred_class.item(), image)
-            
-            if len(result) == 3:
-                cam_image, grayscale_cam, intensity_stats = result
-            else:
-                cam_image, grayscale_cam = result
-                intensity_stats = None
+            cam_image, grayscale_cam = generate_gradcam_heatmap(
+                model, img_tensor, pred_class.item(), image
+            )
         
         if cam_image is not None and isinstance(grayscale_cam, np.ndarray):
-            # Display the three main images
             col_grad1, col_grad2, col_grad3 = st.columns(3)
 
             with col_grad1:
@@ -1471,44 +1242,6 @@ if uploaded_file is not None:
             
             with col_grad3:
                 st.image(cam_image, caption=get_text("ai_focus_overlay", current_lang), use_column_width=True)
-            
-            # Add intensity analysis section
-            if intensity_stats is not None:
-                st.markdown("---")
-                st.subheader(get_text('intensity_analysis', current_lang))
-                st.write(get_text('intensity_description', current_lang))
-                
-                # Display intensity statistics
-                col_stats1, col_stats2 = st.columns(2)
-                
-                with col_stats1:
-                    st.markdown(f"### {get_text('intensity_stats', current_lang)}")
-                    st.metric("Maximum Intensity", f"{intensity_stats['max_intensity']:.3f}", 
-                             help="Highest attention value in the heatmap (0-1 scale)")
-                    st.metric("Average Intensity", f"{intensity_stats['mean_intensity']:.3f}", 
-                             help="Average attention across the entire image")
-                    st.metric("Intensity Variation", f"{intensity_stats['std_intensity']:.3f}", 
-                             help="Standard deviation - higher values indicate more focused attention")
-                
-                with col_stats2:
-                    st.markdown(f"### {get_text('attention_distribution', current_lang)}")
-                    st.metric("High Attention Areas", f"{intensity_stats['high_attention_pixels']:.1f}%", 
-                             help="Percentage of pixels with >50% attention intensity")
-                    st.metric("Medium Attention Areas", f"{intensity_stats['medium_attention_pixels']:.1f}%", 
-                             help="Percentage of pixels with 30-50% attention intensity")
-                    st.metric("Low Attention Areas", f"{intensity_stats['low_attention_pixels']:.1f}%", 
-                             help="Percentage of pixels with <30% attention intensity")
-                
-                # Display intensity charts
-                col_chart1, col_chart2 = st.columns(2)
-                
-                with col_chart1:
-                    intensity_hist = create_intensity_analysis_chart(grayscale_cam, intensity_stats)
-                    st.plotly_chart(intensity_hist, use_container_width=True)
-                
-                with col_chart2:
-                    attention_pie = create_attention_pie_chart(intensity_stats)
-                    st.plotly_chart(attention_pie, use_container_width=True)
 
             st.success(get_text('heatmap_success', current_lang))
             st.info(get_text('how_to_read', current_lang))
@@ -1548,20 +1281,8 @@ if uploaded_file is not None:
         st.subheader(get_text('radar_tab', current_lang))
         st.write(get_text('confidence_radar_desc', current_lang))
         
-        # Show debug information
-        with st.expander("Debug Information (Click to expand)", expanded=False):
-            st.write(f"Total number of classes: {len(CLASS_NAMES)}")
-            st.write(f"Model output shape: {probs.shape}")
-            st.write(f"Top 5 probabilities: {torch.topk(probs, 5).values.tolist()}")
-            st.write(f"Top 5 class indices: {torch.topk(probs, 5).indices.tolist()}")
-            top_5_names = [CLASS_NAMES[i] for i in torch.topk(probs, 5).indices.tolist()]
-            st.write(f"Top 5 class names: {top_5_names}")
-        
-        # Create the radar chart with fresh data
-        with st.spinner('Generating confidence radar chart...'):
-            # Force regeneration of the visualization
-            radar_fig = create_confidence_radar_chart(probs, CLASS_NAMES, top_k=8)
-            st.plotly_chart(radar_fig, use_container_width=True)
+        radar_fig = create_confidence_radar_chart(probs, CLASS_NAMES, top_k=8)
+        st.plotly_chart(radar_fig, use_container_width=True)
         
     with tab4:
         st.subheader(get_text('plant_wise_analysis', current_lang))
@@ -1751,4 +1472,2048 @@ def get_fallback_response(user_input):
            "🐛 Common Problems: pests, aphids, fungus, wilting, yellow leaves\n" \
            "🌱 Garden Basics: soil health, plant diseases\n\n" \
            "Just include these keywords in your question!"
+
+# Chatbot functionality removed
+            </div>
+            <div class="time-stamp">Just now</div>
+        </div>
+    </div>
+    <div class="chat-input-area">
+        <div class="emoji-button" title="Add emoji" onclick="toggleEmojiPicker()">😊</div>
+        <input type="text" id="chat-input" class="chat-input-field" placeholder="Type your message here...">
+        <button id="chat-send" class="chat-send-button">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+            </svg>
+        </button>
+    </div>
+</div>
+
+<script>
+// Create dynamic particles for background effect
+function createParticles() {
+    const container = document.getElementById('particles-container');
+    const particleCount = 20; // Number of particles
+    
+    // Clear any existing particles
+    container.innerHTML = '';
+    
+    for (let i = 0; i < particleCount; i++) {
+        const particle = document.createElement('div');
+        particle.classList.add('particle');
+        
+        // Random position
+        const posX = Math.random() * 100;
+        const posY = Math.random() * 100;
+        particle.style.left = `${posX}%`;
+        particle.style.top = `${posY}%`;
+        
+        // Random size
+        const size = Math.random() * 8 + 2;
+        particle.style.width = `${size}px`;
+        particle.style.height = `${size}px`;
+        
+        // Random opacity
+        const opacity = Math.random() * 0.5 + 0.1;
+        particle.style.opacity = opacity;
+        
+        // Random animation duration
+        const duration = Math.random() * 15 + 8;
+        particle.style.animationDuration = `${duration}s`;
+        
+        // Random animation delay
+        const delay = Math.random() * 5;
+        particle.style.animationDelay = `${delay}s`;
+        
+        // Random rotation
+        const rotation = Math.random() * 360;
+        particle.style.transform = `rotate(${rotation}deg)`;
+        
+        // Add subtle shadow for depth
+        particle.style.boxShadow = '0 0 5px rgba(124, 58, 237, 0.3)';
+        
+        // Random color variation
+        const hue = Math.random() * 40 + 220; // Blues to purples
+        particle.style.backgroundColor = `hsla(${hue}, 70%, 60%, ${opacity})`;
+        
+        // Add some with blurred effect for depth
+        if (Math.random() > 0.7) {
+            particle.style.filter = 'blur(1px)';
+        }
+        
+        container.appendChild(particle);
+    }
+}
+
+// Create enhanced typing indicator with smooth animation
+function showTypingIndicator() {
+    const messagesContainer = document.getElementById('chat-messages');
+    const typingIndicator = document.createElement('div');
+    typingIndicator.id = 'typing-indicator';
+    typingIndicator.className = 'typing-indicator';
+    typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+    
+    // Add with animation
+    typingIndicator.style.opacity = '0';
+    typingIndicator.style.transform = 'scale(0.9)';
+    messagesContainer.appendChild(typingIndicator);
+    
+    setTimeout(() => {
+        typingIndicator.style.opacity = '1';
+        typingIndicator.style.transform = 'scale(1)';
+    }, 10);
+    
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    return typingIndicator;
+}
+
+// Remove typing indicator with fade-out animation
+function removeTypingIndicator() {
+    const typingIndicator = document.getElementById('typing-indicator');
+    if (typingIndicator) {
+        typingIndicator.style.opacity = '0';
+        typingIndicator.style.transform = 'scale(0.9)';
+        
+        setTimeout(() => {
+            if (typingIndicator.parentNode) {
+                typingIndicator.parentNode.removeChild(typingIndicator);
+            }
+        }, 300);
+    }
+}
+
+// Advanced typing effect with natural pacing
+function addTypingEffect(element, text, speed = 20) {
+    // Store original text content if any
+    const originalContent = element.innerHTML;
+    const messageContent = element.querySelector('.message-content') || element;
+    
+    // Clear only the message part, keeping avatar if it exists
+    if (messageContent !== element) {
+        messageContent.textContent = '';
+    } else {
+        element.textContent = '';
+    }
+    
+    let i = 0;
+    let lastCharWasPunctuation = false;
+    
+    function typeNextChar() {
+        if (i < text.length) {
+            const char = text.charAt(i);
+            
+            // Add the character to the element
+            messageContent.textContent += char;
+            i++;
+            
+            // Variable speed based on punctuation
+            let nextSpeed = speed;
+            
+            // Slow down after punctuation for more natural rhythm
+            if (char === '.' || char === '!' || char === '?' || char === ',') {
+                nextSpeed = char === ',' ? speed * 8 : speed * 15;
+                lastCharWasPunctuation = true;
+            } else if (lastCharWasPunctuation) {
+                nextSpeed = speed * 3;
+                lastCharWasPunctuation = false;
+            } else {
+                // Random slight variation in typing speed for natural effect
+                nextSpeed = speed + (Math.random() * speed * 0.5);
+            }
+            
+            // Continue typing after appropriate delay
+            setTimeout(typeNextChar, nextSpeed);
+            
+            // Scroll as typing progresses
+            const messagesContainer = document.getElementById('chat-messages');
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+    }
+    
+    // Start the typing animation
+    typeNextChar();
+}
+
+// Toggle emoji picker (placeholder function)
+function toggleEmojiPicker() {
+    // In a real implementation, this would toggle an emoji picker
+    const input = document.getElementById('chat-input');
+    const emojis = ['😊', '👋', '🌱', '🌿', '🌷', '🍀', '🌺', '🌞', '🌧️', '🧪'];
+    const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+    input.value += randomEmoji;
+    input.focus();
+}
+
+// Get current time in format HH:MM AM/PM
+function getCurrentTime() {
+    const now = new Date();
+    return now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+// Toggle chat window with enhanced animations
+function toggleChat() {
+    const chatWindow = document.getElementById('chat-window');
+    const chatButton = document.getElementById('chat-icon');
+    
+    if (chatWindow.style.display === 'none') {
+        // Show chat window with animation
+        chatWindow.style.display = 'flex';
+        chatWindow.style.opacity = '0';
+        chatWindow.style.transform = 'translate(50%, 50%) scale(0.9)';
+        
+        setTimeout(() => {
+            chatWindow.style.opacity = '1';
+            chatWindow.style.transform = 'translate(50%, 50%) scale(1)';
+        }, 50);
+        
+        // Add active state to button
+        chatButton.classList.add('active');
+    } else {
+        // Hide chat window with animation
+        chatWindow.style.opacity = '0';
+        chatWindow.style.transform = 'translate(50%, 50%) scale(0.9)';
+        
+        setTimeout(() => {
+            chatWindow.style.display = 'none';
+        }, 300);
+        
+        // Remove active state from button
+        chatButton.classList.remove('active');
+    }
+    
+    // Also notify Streamlit of the change
+    if (window.parent.window.streamlitSendBackMsg) {
+        window.parent.window.streamlitSendBackMsg({
+            type: 'streamlit:componentReady',
+            value: { name: 'toggleChat', data: {} }
+        });
+    }
+}
+
+// Set up event listeners with enhanced interaction
+document.addEventListener('DOMContentLoaded', function() {
+    const chatSendButton = document.getElementById('chat-send');
+    const chatInput = document.getElementById('chat-input');
+    
+    chatSendButton.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            sendMessage();
+            e.preventDefault();
+        }
+    });
+    
+    // Focus input when chat window is opened
+    const chatWindow = document.getElementById('chat-window');
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.attributeName === 'style' && 
+                chatWindow.style.display !== 'none' && 
+                chatWindow.style.opacity !== '0') {
+                chatInput.focus();
+            }
+        });
+    });
+    
+    observer.observe(chatWindow, { attributes: true });
+    
+    // Add subtle interaction effects
+    chatInput.addEventListener('focus', function() {
+        this.parentElement.style.boxShadow = '0 0 0 2px rgba(124, 58, 237, 0.2)';
+    });
+    
+    chatInput.addEventListener('blur', function() {
+        this.parentElement.style.boxShadow = 'none';
+    });
+});
+
+// Enhanced send message function with modern UI and animations
+function sendMessage() {
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    
+    if (message) {
+        // Add user message to chat with animation
+        const messagesContainer = document.getElementById('chat-messages');
+        const userBubble = document.createElement('div');
+        userBubble.className = 'user-bubble';
+        
+        // Create message content and timestamp
+        const messageContent = document.createElement('div');
+        messageContent.className = 'message-content';
+        messageContent.textContent = message;
+        
+        const timeStamp = document.createElement('div');
+        timeStamp.className = 'time-stamp';
+        timeStamp.textContent = getCurrentTime();
+        
+        // Add content to bubble
+        userBubble.appendChild(messageContent);
+        userBubble.appendChild(timeStamp);
+        
+        // Set initial state for animation
+        userBubble.style.opacity = '0';
+        userBubble.style.transform = 'translateY(10px) scale(0.95)';
+        
+        // Add to container
+        messagesContainer.appendChild(userBubble);
+        
+        // Trigger animation
+        setTimeout(() => {
+            userBubble.style.opacity = '1';
+            userBubble.style.transform = 'translateY(0) scale(1)';
+        }, 10);
+        
+        // Clear input
+        input.value = '';
+        input.focus();
+        
+        // Scroll to bottom with smooth animation
+        smoothScrollToBottom(messagesContainer);
+        
+        // Show typing indicator with delay
+        setTimeout(() => {
+            showTypingIndicator();
+        }, 500);
+        
+        // Send message to Streamlit
+        if (window.parent.window.streamlitSendBackMsg) {
+            window.parent.window.streamlitSendBackMsg({
+                type: 'streamlit:componentReady',
+                value: { name: 'chatMessage', data: message }
+            });
+        }
+    }
+}
+
+// Smooth scroll to bottom function
+function smoothScrollToBottom(element) {
+    const targetPosition = element.scrollHeight;
+    const startPosition = element.scrollTop;
+    const distance = targetPosition - startPosition;
+    const duration = 300;
+    let startTime = null;
+    
+    function animation(currentTime) {
+        if (startTime === null) startTime = currentTime;
+        const timeElapsed = currentTime - startTime;
+        const scrollY = easeInOutQuad(timeElapsed, startPosition, distance, duration);
+        element.scrollTop = scrollY;
+        if (timeElapsed < duration) requestAnimationFrame(animation);
+    }
+    
+    // Easing function
+    function easeInOutQuad(t, b, c, d) {
+        t /= d/2;
+        if (t < 1) return c/2*t*t + b;
+        t--;
+        return -c/2 * (t*(t-2) - 1) + b;
+    }
+    
+    requestAnimationFrame(animation);
+}
+
+// Enhanced bot message function with avatar and voice wave animation
+window.addBotMessage = function(message) {
+    // Remove typing indicator with animation
+    removeTypingIndicator();
+    
+    const messagesContainer = document.getElementById('chat-messages');
+    const botBubble = document.createElement('div');
+    botBubble.className = 'bot-bubble';
+    
+    // Create bot avatar with voice wave animation
+    const botAvatar = document.createElement('div');
+    botAvatar.className = 'bot-avatar';
+    botAvatar.innerHTML = `
+        <div class="voice-wave">
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+    `;
+    
+    // Create message content element
+    const messageContent = document.createElement('div');
+    messageContent.className = 'message-content';
+    
+    // Create timestamp
+    const timeStamp = document.createElement('div');
+    timeStamp.className = 'time-stamp';
+    timeStamp.textContent = getCurrentTime();
+    
+    // Add elements to bubble
+    botBubble.appendChild(botAvatar);
+    botBubble.appendChild(messageContent);
+    botBubble.appendChild(timeStamp);
+    
+    // Set initial state for animation
+    botBubble.style.opacity = '0';
+    botBubble.style.transform = 'translateY(10px) scale(0.95)';
+    
+    // Add to container
+    messagesContainer.appendChild(botBubble);
+    
+    // Trigger appearance animation
+    setTimeout(() => {
+        botBubble.style.opacity = '1';
+        botBubble.style.transform = 'translateY(0) scale(1)';
+    }, 10);
+    
+    // Add typing effect after appearance animation
+    setTimeout(() => {
+        addTypingEffect(botBubble, message, 8);
+        
+        // Remove voice wave animation when typing is complete
+        const typingDuration = message.length * 8 + 500;
+        setTimeout(() => {
+            const voiceWave = botAvatar.querySelector('.voice-wave');
+            if (voiceWave) {
+                voiceWave.style.opacity = '0';
+                setTimeout(() => {
+                    botAvatar.innerHTML = '🌿';
+                }, 300);
+            }
+        }, typingDuration);
+    }, 300);
+    
+    // Scroll to bottom
+    smoothScrollToBottom(messagesContainer);
+};
+
+// Enhanced chat visibility update with smooth animations
+window.updateChatVisibility = function(isVisible) {
+    const chatWindow = document.getElementById('chat-window');
+    const chatButton = document.getElementById('chat-icon');
+    
+    if (isVisible) {
+        // Show chat with animation
+        chatWindow.style.display = 'flex';
+        chatWindow.style.opacity = '0';
+        chatWindow.style.transform = 'translate(50%, 50%) scale(0.9)';
+        
+        setTimeout(() => {
+            chatWindow.style.opacity = '1';
+            chatWindow.style.transform = 'translate(50%, 50%) scale(1)';
+            // Focus input
+            document.getElementById('chat-input').focus();
+        }, 50);
+        
+        chatButton.classList.add('active');
+    } else {
+        // Hide chat with animation
+        chatWindow.style.opacity = '0';
+        chatWindow.style.transform = 'translate(50%, 50%) scale(0.9)';
+        
+        setTimeout(() => {
+            chatWindow.style.display = 'none';
+        }, 300);
+        
+        chatButton.classList.remove('active');
+    }
+};
+
+// Enhanced chat history update with staged animations
+window.updateChatHistory = function(history) {
+    const messagesContainer = document.getElementById('chat-messages');
+    messagesContainer.innerHTML = '';
+    
+    if (history.length === 0) {
+        // Create welcome message with avatar and typing effect
+        const welcomeBubble = document.createElement('div');
+        welcomeBubble.className = 'bot-bubble';
+        
+        // Create bot avatar with voice wave
+        const botAvatar = document.createElement('div');
+        botAvatar.className = 'bot-avatar';
+        botAvatar.innerHTML = `
+            <div class="voice-wave">
+                <span></span>
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        `;
+        
+        // Create message content and timestamp
+        const messageContent = document.createElement('div');
+        messageContent.className = 'message-content';
+        
+        const timeStamp = document.createElement('div');
+        timeStamp.className = 'time-stamp';
+        timeStamp.textContent = getCurrentTime();
+        
+        // Add elements to bubble
+        welcomeBubble.appendChild(botAvatar);
+        welcomeBubble.appendChild(messageContent);
+        welcomeBubble.appendChild(timeStamp);
+        
+        messagesContainer.appendChild(welcomeBubble);
+        
+        // Add typing effect
+        setTimeout(() => {
+            const welcomeText = '👋 Hi there! How can I assist you today with plant care or disease questions?';
+            addTypingEffect(welcomeBubble, welcomeText, 8);
+            
+            // Remove voice wave animation when typing is complete
+            const typingDuration = welcomeText.length * 8 + 500;
+            setTimeout(() => {
+                const voiceWave = botAvatar.querySelector('.voice-wave');
+                if (voiceWave) {
+                    voiceWave.style.opacity = '0';
+                    setTimeout(() => {
+                        botAvatar.innerHTML = '🌿';
+                    }, 300);
+                }
+            }, typingDuration);
+        }, 500);
+        
+        return;
+    }
+    
+    // Add messages with staged animation
+    let delay = 0;
+    const delayIncrement = 200;
+    
+    for (const msg of history) {
+        setTimeout(() => {
+            if (msg.role === 'user') {
+                // Create user message
+                const userBubble = document.createElement('div');
+                userBubble.className = 'user-bubble';
+                
+                // Create message content and timestamp
+                const messageContent = document.createElement('div');
+                messageContent.className = 'message-content';
+                messageContent.textContent = msg.content;
+                
+                const timeStamp = document.createElement('div');
+                timeStamp.className = 'time-stamp';
+                timeStamp.textContent = getCurrentTime();
+                
+                // Add content to bubble
+                userBubble.appendChild(messageContent);
+                userBubble.appendChild(timeStamp);
+                
+                // Set initial state for animation
+                userBubble.style.opacity = '0';
+                userBubble.style.transform = 'translateY(10px) scale(0.95)';
+                
+                // Add to container
+                messagesContainer.appendChild(userBubble);
+                
+                // Trigger animation
+                setTimeout(() => {
+                    userBubble.style.opacity = '1';
+                    userBubble.style.transform = 'translateY(0) scale(1)';
+                }, 10);
+                
+            } else if (msg.role === 'assistant') {
+                // Create bot message with avatar
+                const botBubble = document.createElement('div');
+                botBubble.className = 'bot-bubble';
+                
+                // Create bot avatar
+                const botAvatar = document.createElement('div');
+                botAvatar.className = 'bot-avatar';
+                botAvatar.innerHTML = '🌿';
+                
+                // Create message content and timestamp
+                const messageContent = document.createElement('div');
+                messageContent.className = 'message-content';
+                messageContent.textContent = msg.content;
+                
+                const timeStamp = document.createElement('div');
+                timeStamp.className = 'time-stamp';
+                timeStamp.textContent = getCurrentTime();
+                
+                // Add elements to bubble
+                botBubble.appendChild(botAvatar);
+                botBubble.appendChild(messageContent);
+                botBubble.appendChild(timeStamp);
+                
+                // Set initial state for animation
+                botBubble.style.opacity = '0';
+                botBubble.style.transform = 'translateY(10px) scale(0.95)';
+                
+                // Add to container
+                messagesContainer.appendChild(botBubble);
+                
+                // Trigger animation
+                setTimeout(() => {
+                    botBubble.style.opacity = '1';
+                    botBubble.style.transform = 'translateY(0) scale(1)';
+                }, 10);
+            }
+            
+            // Scroll to the last message
+            smoothScrollToBottom(messagesContainer);
+        }, delay);
+        
+        delay += delayIncrement;
+    }
+};
+
+// Initialize particles and other effects
+document.addEventListener('DOMContentLoaded', function() {
+    // Create particles
+    createParticles();
+    
+    // Set up transitions
+    const chatWindow = document.getElementById('chat-window');
+    chatWindow.style.opacity = '0';
+    chatWindow.style.transform = 'translate(50%, 50%) scale(0.9)';
+    chatWindow.style.transition = 'opacity 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+    
+    // Apply initial typing effect to welcome message with delay
+    const welcomeMessage = document.querySelector('.bot-bubble.typing-effect');
+    if (welcomeMessage) {
+        const messageContent = welcomeMessage.querySelector('.message-content');
+        const messageText = messageContent.textContent;
+        messageContent.textContent = '';
+        
+        setTimeout(() => {
+            addTypingEffect(welcomeMessage, messageText, 8);
+            
+            // Remove voice wave animation when typing is complete
+            const typingDuration = messageText.length * 8 + 500;
+            setTimeout(() => {
+                const botAvatar = welcomeMessage.querySelector('.bot-avatar');
+                const voiceWave = botAvatar.querySelector('.voice-wave');
+                if (voiceWave) {
+                    voiceWave.style.opacity = '0';
+                    setTimeout(() => {
+                        botAvatar.innerHTML = '🌿';
+                    }, 300);
+                }
+            }, typingDuration);
+        }, 800);
+    }
+    
+    // Recreate particles every minute for dynamic effect
+    setInterval(createParticles, 60000);
+});
+</script>
+"""
+
+# Chat UI removed
+
+# Create simpler chat interaction components
+# This will use Streamlit's native state management instead of complex bidirectional communication
+
+# Note: We're keeping only one instance of the toggle_chat() function
+# The first definition is used, this one is removed to avoid duplication
+
+# Function to handle chat button clicks
+if 'chat_toggle_button' not in st.session_state:
+    st.session_state.chat_toggle_button = False
+
+# Initialize the chat interface state
+if 'chat_message' not in st.session_state:
+    st.session_state.chat_message = ""
+
+# Add CSS for enhanced chatbot components with animations and modern UI
+st.markdown("""
+<style>
+/* Modern Ultra-Enhanced Chatbot styling with futuristic design */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+/* Keyframes for animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(15px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(33, 150, 243, 0.7); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(33, 150, 243, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(33, 150, 243, 0); }
+}
+
+@keyframes typing {
+    from { width: 0 }
+    to { width: 100% }
+}
+
+@keyframes blink {
+    50% { border-color: transparent }
+}
+
+@keyframes wave {
+    0% { transform: translateY(0px); }
+    25% { transform: translateY(-3px); }
+    50% { transform: translateY(0px); }
+    75% { transform: translateY(3px); }
+    100% { transform: translateY(0px); }
+}
+
+@keyframes glow {
+    0% { box-shadow: 0 0 5px rgba(33, 150, 243, 0.5); }
+    50% { box-shadow: 0 0 20px rgba(33, 150, 243, 0.8); }
+    100% { box-shadow: 0 0 5px rgba(33, 150, 243, 0.5); }
+}
+
+@keyframes float {
+    0% { transform: translateY(0px) rotate(0deg); }
+    50% { transform: translateY(-10px) rotate(3deg); }
+    100% { transform: translateY(0px) rotate(0deg); }
+}
+
+@keyframes gradientFlow {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+@keyframes borderGlow {
+    0% { border-color: #4F46E5; }
+    50% { border-color: #A78BFA; }
+    100% { border-color: #4F46E5; }
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-15px); }
+    60% { transform: translateY(-7px); }
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Advanced particles background with dynamic effects */
+.particles {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.particle {
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    background-color: rgba(33, 150, 243, 0.15);
+    border-radius: 50%;
+    animation: float 10s infinite ease-in-out;
+    opacity: 0.7;
+    filter: blur(1px);
+}
+
+/* Gradient background overlay */
+.bg-gradient {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(125deg, #a864fd33, #29cdff33, #78ff9233, #ff718d33);
+    background-size: 400% 400%;
+    animation: gradientFlow 15s ease infinite;
+    z-index: -2;
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+/* Main container */
+.chatbot-container {
+    position: fixed;
+    bottom: 25px;
+    right: 25px;
+    z-index: 9999;
+    font-family: 'Inter', sans-serif;
+}
+
+/* Floating button with modern design */
+.chat-button {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    border: none;
+    box-shadow: 0 5px 15px rgba(124, 58, 237, 0.4), 0 0 0 0 rgba(124, 58, 237, 0.8);
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.4s cubic-bezier(0.68, -0.55, 0.27, 1.55);
+    animation: pulse 2.5s infinite;
+    position: relative;
+    overflow: hidden;
+}
+
+.chat-button:before {
+    content: "";
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: rgba(255, 255, 255, 0.1);
+    transform: rotate(45deg);
+    transition: all 0.6s ease;
+    opacity: 0;
+}
+
+.chat-button:hover {
+    transform: scale(1.08);
+    box-shadow: 0 8px 25px rgba(124, 58, 237, 0.5);
+}
+
+.chat-button:hover:before {
+    opacity: 0.3;
+    animation: spin 2s linear infinite;
+}
+
+.chat-button svg {
+    width: 26px;
+    height: 26px;
+    fill: white;
+    animation: wave 3s ease infinite;
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.2));
+}
+
+/* Modern, centered chat window with glassmorphism */
+.chat-window {
+    position: fixed;
+    bottom: 50%;
+    right: 50%;
+    transform: translate(50%, 50%) scale(1);
+    width: 400px;
+    height: 550px;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    animation: scaleIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    font-family: 'Inter', sans-serif;
+    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Modern futuristic header with animated gradient */
+.chat-header {
+    background: linear-gradient(-45deg, #4F46E5, #7C3AED, #A78BFA, #4F46E5);
+    background-size: 300% 300%;
+    animation: gradientFlow 6s ease infinite;
+    color: white;
+    padding: 20px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 500;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+    position: relative;
+}
+
+.chat-header:after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.5), transparent);
+}
+
+.chat-header-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.chat-header-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.15);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 20px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.chat-header-avatar:after {
+    content: "";
+    position: absolute;
+    top: -10px;
+    left: -10px;
+    width: calc(100% + 20px);
+    height: calc(100% + 20px);
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.2) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.chat-header-avatar:hover:after {
+    opacity: 1;
+}
+
+.chat-header-title {
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-header-name {
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: 0.2px;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.chat-header-status {
+    font-size: 13px;
+    opacity: 0.85;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.chat-header-status:before {
+    content: "";
+    display: block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4ADE80;
+    box-shadow: 0 0 10px #4ADE80;
+    animation: pulse 2s infinite;
+}
+
+.chat-close {
+    cursor: pointer;
+    color: white;
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.15);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    font-size: 20px;
+    backdrop-filter: blur(5px);
+}
+
+.chat-close:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: scale(1.1) rotate(90deg);
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+}
+
+/* Advanced messages container with elegant scrolling */
+.chat-messages {
+    flex-grow: 1;
+    padding: 24px;
+    overflow-y: auto;
+    background: rgba(248, 250, 252, 0.3);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(124, 58, 237, 0.5) transparent;
+    background-image: 
+        radial-gradient(circle at 25% 25%, rgba(124, 58, 237, 0.03) 0%, transparent 50%),
+        radial-gradient(circle at 75% 75%, rgba(79, 70, 229, 0.03) 0%, transparent 50%);
+    position: relative;
+}
+
+.chat-messages::-webkit-scrollbar {
+    width: 5px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+    background-color: rgba(124, 58, 237, 0.3);
+    border-radius: 20px;
+    transition: background-color 0.3s ease;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(124, 58, 237, 0.5);
+}
+
+/* Futuristic input area with dynamic effects */
+.chat-input-area {
+    padding: 18px 22px;
+    border-top: 1px solid rgba(124, 58, 237, 0.1);
+    display: flex;
+    background: rgba(255, 255, 255, 0.7);
+    align-items: center;
+    gap: 12px;
+    position: relative;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.chat-input-area:before {
+    content: "";
+    position: absolute;
+    top: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(to right, rgba(124, 58, 237, 0), rgba(124, 58, 237, 0.5), rgba(124, 58, 237, 0));
+}
+
+.chat-input-field {
+    flex-grow: 1;
+    border: 2px solid rgba(124, 58, 237, 0.2);
+    border-radius: 16px;
+    padding: 14px 20px;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 2px 4px rgba(0, 0, 0, 0.02);
+    transition: all 0.3s ease;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    color: #374151;
+    letter-spacing: 0.2px;
+    position: relative;
+    z-index: 1;
+}
+
+.chat-input-field:focus {
+    outline: none;
+    border-color: #7C3AED;
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.25), inset 0 2px 4px rgba(0, 0, 0, 0.01);
+}
+
+.chat-input-field::placeholder {
+    color: #9CA3AF;
+    opacity: 0.8;
+}
+
+.chat-send-button {
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    color: white;
+    border: none;
+    border-radius: 14px;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 4px 10px rgba(124, 58, 237, 0.25);
+    position: relative;
+    overflow: hidden;
+}
+
+.chat-send-button:before {
+    content: "";
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(transparent, rgba(255, 255, 255, 0.2), transparent);
+    transform: rotate(45deg);
+    transition: transform 0.5s ease;
+    transform: translateX(-100%);
+}
+
+.chat-send-button:hover {
+    transform: scale(1.08) translateY(-2px);
+    box-shadow: 0 6px 15px rgba(124, 58, 237, 0.35);
+}
+
+.chat-send-button:hover:before {
+    transform: translateX(100%);
+    transition: transform 0.8s ease;
+}
+
+.chat-send-button:active {
+    transform: scale(0.95);
+}
+
+.chat-send-button svg {
+    width: 20px;
+    height: 20px;
+    fill: white;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+}
+
+/* Advanced modern chat bubbles with animations */
+.user-bubble {
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    color: white;
+    padding: 14px 20px;
+    border-radius: 16px 16px 0 16px;
+    margin: 5px 0;
+    max-width: 85%;
+    align-self: flex-end;
+    margin-left: auto;
+    box-shadow: 0 4px 15px rgba(79, 70, 229, 0.25);
+    animation: scaleIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    word-wrap: break-word;
+    position: relative;
+    z-index: 1;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    font-weight: 400;
+    letter-spacing: 0.2px;
+    line-height: 1.5;
+    transform-origin: bottom right;
+}
+
+.user-bubble:before {
+    content: "";
+    position: absolute;
+    bottom: -5px;
+    right: 15px;
+    width: 10px;
+    height: 10px;
+    background: linear-gradient(135deg, transparent 50%, #7C3AED 50%);
+    transform: rotate(45deg);
+    z-index: -1;
+}
+
+.user-bubble:after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 16px 16px 0 16px;
+    padding: 2px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.05));
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    -webkit-mask-composite: destination-out;
+    pointer-events: none;
+}
+
+.bot-bubble {
+    background: rgba(255, 255, 255, 0.85);
+    padding: 14px 20px;
+    border-radius: 16px 16px 16px 0;
+    margin: 5px 0;
+    max-width: 85%;
+    align-self: flex-start;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+    animation: scaleIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    word-wrap: break-word;
+    border-left: 3px solid #7C3AED;
+    position: relative;
+    z-index: 1;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: #1F2937;
+    font-weight: 400;
+    letter-spacing: 0.2px;
+    line-height: 1.5;
+    transform-origin: top left;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.bot-bubble:before {
+    content: "";
+    position: absolute;
+    bottom: -5px;
+    left: 15px;
+    width: 10px;
+    height: 10px;
+    background: linear-gradient(-45deg, transparent 50%, rgba(255, 255, 255, 0.85) 50%);
+    transform: rotate(45deg);
+    z-index: -1;
+}
+
+.bot-bubble:hover {
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+    transform: translateY(-1px);
+    transition: all 0.3s ease;
+}
+
+/* Advanced typing indicator with wave animation */
+.typing-indicator {
+    display: flex;
+    align-items: center;
+    padding: 12px 18px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 16px 16px 16px 0;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+    width: fit-content;
+    margin-top: 5px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-left: 3px solid #7C3AED;
+    position: relative;
+    animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.typing-indicator:before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, rgba(124, 58, 237, 0), rgba(124, 58, 237, 0.05));
+    border-radius: 16px 16px 16px 0;
+    z-index: -1;
+}
+
+.typing-indicator span {
+    height: 9px;
+    width: 9px;
+    margin: 0 3px;
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 5px rgba(124, 58, 237, 0.3);
+}
+
+.typing-indicator span:nth-child(1) {
+    animation: bounce 1.2s ease-in-out infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+    animation: bounce 1.2s ease-in-out 0.15s infinite;
+}
+
+.typing-indicator span:nth-child(3) {
+    animation: bounce 1.2s ease-in-out 0.3s infinite;
+}
+
+/* Bot avatar animation for voice wave visualization */
+.bot-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    margin-right: 8px;
+    position: relative;
+    overflow: hidden;
+}
+
+.voice-wave {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+}
+
+.voice-wave span {
+    display: inline-block;
+    width: 3px;
+    height: 10px;
+    margin: 0 1px;
+    background-color: rgba(255, 255, 255, 0.9);
+    border-radius: 15px;
+}
+
+.voice-wave span:nth-child(1) {
+    animation: wave 0.6s ease-in-out infinite;
+    height: 8px;
+}
+.voice-wave span:nth-child(2) {
+    animation: wave 0.7s ease-in-out 0.1s infinite;
+    height: 16px;
+}
+.voice-wave span:nth-child(3) {
+    animation: wave 0.8s ease-in-out 0.2s infinite;
+    height: 10px;
+}
+.voice-wave span:nth-child(4) {
+    animation: wave 0.7s ease-in-out 0.3s infinite;
+    height: 14px;
+}
+
+.chat-popup {
+    visibility: hidden;
+}
+
+/* To make the Streamlit sidebar look like a floating chat window */
+.streamlit-expanderHeader, .stExpander {
+    display: none !important;
+}
+
+/* Additional UI enhancements */
+.emoji-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: rgba(124, 58, 237, 0.1);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 1px solid rgba(124, 58, 237, 0.2);
+    color: #7C3AED;
+    font-size: 18px;
+}
+
+.emoji-button:hover {
+    background: rgba(124, 58, 237, 0.15);
+    transform: scale(1.05);
+}
+
+.time-stamp {
+    font-size: 10px;
+    opacity: 0.7;
+    margin-top: 2px;
+    align-self: flex-end;
+    font-weight: 400;
+}
+
+/* Media queries for responsive design */
+@media screen and (max-width: 768px) {
+    .chat-window {
+        width: 90%;
+        height: 70vh;
+        max-height: none;
+        bottom: 50%;
+        right: 50%;
+        border-radius: 18px;
+    }
+    
+    .chat-button {
+        bottom: 15px;
+        right: 15px;
+    }
+    
+    .chat-input-area {
+        padding: 15px;
+    }
+    
+    .chat-input-field {
+        padding: 12px 16px;
+    }
+    
+    .user-bubble, .bot-bubble {
+        max-width: 90%;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .chat-window {
+        background: rgba(30, 30, 46, 0.85);
+        border-color: rgba(255, 255, 255, 0.1);
+    }
+    
+    .chat-input-field {
+        background: rgba(30, 30, 46, 0.9);
+        color: #e2e8f0;
+        border-color: rgba(124, 58, 237, 0.3);
+    }
+    
+    .chat-input-field::placeholder {
+        color: #94a3b8;
+    }
+    
+    .bot-bubble {
+        background: rgba(40, 40, 56, 0.85);
+        color: #e2e8f0;
+    }
+    
+    .typing-indicator {
+        background: rgba(40, 40, 56, 0.85);
+    }
+    
+    .chat-messages {
+        background: rgba(30, 30, 40, 0.3);
+    }
+}
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Create the chat button component
+chat_button_html = """
+<div class="chatbot-container" style="position: fixed; bottom: 20px; right: 20px; z-index: 1000;">
+    <button onclick="toggleChatWindow()" class="chat-button" 
+           style="width: 60px; height: 60px; border-radius: 30px; background-color: #4CAF50; 
+                  border: none; box-shadow: 0 2px 10px rgba(0,0,0,0.2); cursor: pointer;
+                  display: flex; justify-content: center; align-items: center; transition: transform 0.2s;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="white">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+            <path d="M7 9h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z"/>
+        </svg>
+    </button>
+</div>
+
+<style>
+    .chat-button:hover {
+        transform: scale(1.05);
+    }
+    .chat-button:active {
+        transform: scale(0.95);
+    }
+</style>
+
+<script>
+    function toggleChatWindow() {
+        // Force reload with chat=true parameter
+        const chatParam = 'chat=true';
+        const currentUrl = window.location.href;
+        const hasParams = currentUrl.includes('?');
+        const hasChat = currentUrl.includes(chatParam);
+        
+        if (hasChat) {
+            // If chat is already enabled, just refresh
+            window.location.reload();
+        } else if (hasParams) {
+            // Has other params, append chat param
+            window.location.href = currentUrl + '&' + chatParam;
+        } else {
+            // No params, add chat param
+            window.location.href = currentUrl + '?' + chatParam;
+        }
+    }
+</script>
+"""
+
+# Create a simple floating chat button that works reliably
+chat_button_html = """
+<div style="position: fixed; bottom: 20px; right: 20px; z-index: 9999;">
+    <button onclick="toggleChat()" style="width: 60px; height: 60px; border-radius: 30px; background-color: #4CAF50; border: none; 
+            cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.2); display: flex; justify-content: center; align-items: center;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="white">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+            <path d="M7 9h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z"/>
+        </svg>
+    </button>
+</div>
+
+<script>
+    function toggleChat() {
+        // This will simply redirect to the same page with a chat parameter to trigger the chat display
+        window.location.href = window.location.pathname + "?show_chat=true";
+    }
+</script>
+"""
+
+# Chat button removed
+    
+    # Add CSS to position the button at bottom right
+    st.markdown("""
+        <style>
+        /* Position the Chat button at the bottom right */
+        [data-testid="baseButton-primary"]:has(div:contains("💬 Chat")) {
+            position: fixed !important;
+            right: 20px !important;
+            bottom: 20px !important;
+            width: auto !important;
+            height: 60px !important;
+            border-radius: 30px !important;
+            padding: 0px 20px !important;
+            box-shadow: 0px 3px 10px rgba(0, 0, 0, 0.3) !important;
+            z-index: 999 !important;
+            font-size: 16px !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    
+    # Check if a normal button is clicked as a fallback
+    if st.button("💬 Chat", key="chat_button_fallback"):
+        toggle_chat()
+
+# Add custom CSS for the chat container
+st.markdown("""
+<style>
+.chat-container {
+    position: fixed !important;
+    bottom: 80px !important;
+    right: 20px !important;
+    width: 350px !important;
+    height: 500px !important;
+    background-color: white !important;
+    border-radius: 10px !important;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2) !important;
+    z-index: 9999 !important;
+    overflow: hidden !important;
+    border: 1px solid #ddd !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+.chat-header {
+    background-color: #4CAF50;
+    color: white;
+    padding: 10px 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.chat-messages {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 10px;
+    background-color: #f5f5f5;
+}
+
+.chat-input {
+    padding: 10px;
+    border-top: 1px solid #ddd;
+    background-color: white;
+}
+
+.user-message {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+}
+
+.bot-message {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 10px;
+}
+
+.message-bubble {
+    padding: 8px 12px;
+    border-radius: 15px;
+    max-width: 80%;
+    word-wrap: break-word;
+}
+
+.user-bubble {
+    background-color: #4CAF50;
+    color: white;
+    border-radius: 15px 15px 0 15px;
+}
+
+.bot-bubble {
+    background-color: white;
+    color: black;
+    border-radius: 15px 15px 15px 0;
+    border: 1px solid #e0e0e0;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Chat interface removed
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+    
+    /* Animation keyframes */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    @keyframes slideIn {
+        from { transform: translateX(30px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    
+    @keyframes pulse {
+        0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.7); }
+        70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(124, 58, 237, 0); }
+        100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(124, 58, 237, 0); }
+    }
+    
+    @keyframes gradientFlow {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    
+    @keyframes typing {
+        0% { width: 0; }
+        100% { width: 100%; }
+    }
+    
+    .chat-overlay {
+        position: fixed;
+        right: 20px;
+        bottom: 80px;
+        width: 350px;
+        height: 480px;
+        background-color: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        font-family: 'Inter', sans-serif;
+        font-size: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        animation: fadeIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+        transform-origin: bottom right;
+    }
+    
+    .chat-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 18px;
+        background: linear-gradient(135deg, #4F46E5, #7C3AED, #A78BFA);
+        background-size: 300% 300%;
+        animation: gradientFlow 6s ease infinite;
+        color: white;
+        font-weight: 600;
+        font-size: 16px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+        position: relative;
+    }
+    
+    .chat-header::after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: 2px;
+        background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.5), transparent);
+    }
+    
+    .close-button {
+        cursor: pointer;
+        font-size: 20px;
+        background: rgba(255, 255, 255, 0.15);
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 12px;
+        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    
+    .close-button:hover {
+        background: rgba(255, 255, 255, 0.25);
+        transform: scale(1.1) rotate(90deg);
+    }
+    
+    .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+        background: rgba(248, 250, 252, 0.4);
+        background-image: 
+            radial-gradient(circle at 25% 25%, rgba(124, 58, 237, 0.03) 0%, transparent 50%),
+            radial-gradient(circle at 75% 75%, rgba(79, 70, 229, 0.03) 0%, transparent 50%);
+        scrollbar-width: thin;
+        scrollbar-color: rgba(124, 58, 237, 0.3) transparent;
+    }
+    
+    .chat-messages::-webkit-scrollbar {
+        width: 5px;
+    }
+    
+    .chat-messages::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    
+    .chat-messages::-webkit-scrollbar-thumb {
+        background-color: rgba(124, 58, 237, 0.3);
+        border-radius: 20px;
+        transition: background-color 0.3s ease;
+    }
+    
+    .chat-messages::-webkit-scrollbar-thumb:hover {
+        background-color: rgba(124, 58, 237, 0.5);
+    }
+    
+    /* Make all chat elements have animations */
+    .stButton, .stTextInput, .css-15zagb {
+        animation: fadeIn 0.5s ease;
+    }
+    
+    .stMarkdown p {
+        margin-bottom: 8px;
+    }
+    
+    /* Add a subtle glow effect to buttons on hover */
+    .stButton > button:hover {
+        box-shadow: 0 0 15px rgba(124, 58, 237, 0.4);
+        transform: translateY(-2px);
+        transition: all 0.3s ease;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Create a more compact header
+    chat_col1, chat_col2 = st.columns([5, 1])
+    
+    with chat_col2:
+        # Add small close button
+        if st.button("❌", on_click=toggle_chat, key="close_chat_btn", help="Close chat"):
+            pass
+    
+    with chat_col1:
+        st.markdown("💬 **Farmcare AI**")
+    
+    # Create a container for the chat content
+    chat_container = st.container()
+    
+    # Add a minimal header
+    chat_container.markdown("""
+    <div style="background-color: #f9f9f9; border-bottom: 1px solid #eee; padding: 8px 10px; margin-bottom: 5px;">
+    <h5 style="margin: 0; font-size: 15px;">Chat with Farmcare AI</h5>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Debug section removed
+    
+    # Display chat history in a scrollable container
+    chat_history_container = chat_container.container()
+    with chat_history_container:
+        # Add some scrollable area with fixed height
+        st.markdown("""
+        <div style="max-height: 280px; overflow-y: auto; padding: 8px; background-color: #fafafa; border-radius: 8px; margin-bottom: 5px; font-size: 14px;">
+        """, unsafe_allow_html=True)
+        
+        if not st.session_state.chat_history:
+            st.info("No messages yet. Ask about plant diseases or gardening tips!")
+        
+        # Display messages with improved compact styling
+        for msg in st.session_state.chat_history:
+            if msg["role"] == "user":
+                st.markdown(
+                    f"""<div style="display: flex; justify-content: flex-end; margin-bottom: 8px;">
+                        <div style="background-color: #4CAF50; color: white; padding: 8px 12px; border-radius: 16px 16px 0px 16px; max-width: 80%; box-shadow: 0 1px 1px rgba(0,0,0,0.1); font-size: 14px;">
+                            {msg["content"]}
+                        </div>
+                    </div>""", 
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f"""<div style="display: flex; justify-content: flex-start; margin-bottom: 8px;">
+                        <div style="background-color: #F0F0F0; padding: 8px 12px; border-radius: 16px 16px 16px 0px; max-width: 80%; box-shadow: 0 1px 1px rgba(0,0,0,0.1); font-size: 14px;">
+                            {msg["content"]}
+                        </div>
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Add chat input area with a compact form
+    with chat_container:
+        # Initialize offline_mode in session state if it doesn't exist
+        if 'offline_mode' not in st.session_state:
+            st.session_state['offline_mode'] = False
+            
+        # Display API connection status
+        if st.session_state.get('offline_mode', False):
+            st.markdown("""
+                <div style="padding: 5px 10px; margin-bottom: 10px; border-radius: 5px; background-color: #FFF3CD; color: #856404; font-size: 14px; display: flex; align-items: center; justify-content: center;">
+                    <span style="margin-right: 5px;">⚠️</span> Running in offline mode (API rate limit exceeded)
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+                <div style="padding: 5px 10px; margin-bottom: 10px; border-radius: 5px; background-color: #D4EDDA; color: #155724; font-size: 14px; display: flex; align-items: center; justify-content: center;">
+                    <span style="margin-right: 5px;">🟢</span> Connected to Gemini API
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with st.form(key="chat_form", clear_on_submit=True, border=False):
+            # More compact input area
+            st.markdown("<div style='font-size: 13px; margin-bottom: 3px;'>Your message:</div>", unsafe_allow_html=True)
+            user_input = st.text_input("", placeholder="Type your question about plants...", label_visibility="collapsed")
+            cols = st.columns([0.8, 0.2])
+            with cols[1]:
+                submit_button = st.form_submit_button("Send 📤", use_container_width=True, type="primary")
+            
+            if submit_button and user_input:
+                # Add user message to chat history
+                st.session_state.chat_history.append({"role": "user", "content": user_input})
+                
+                # Show a loading message while generating the response
+                with st.spinner("AI is thinking..."):
+                    # Generate AI response
+                    ai_response = generate_gemini_response(user_input)
+                    
+                    # Add AI response to chat history
+                    st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
+                
+                # Rerun to update UI with new messages
+                st.rerun()
+                
+    # End the chat container div
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Add dummy HTML to skip the original implementation
+    chat_window_html = f"""
+    <!-- Dummy HTML -->
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            * {{
+                box-sizing: border-box;
+            }}
+            
+            body {{
+                margin: 0;
+                padding: 0;
+                font-family: Arial, Helvetica, sans-serif;
+                overflow: hidden;
+                background: transparent;
+            }}
+            
+            #chat-container {{
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                background-color: white;
+                border-radius: 12px;
+                box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+                overflow: hidden;
+            }}
+            
+            .chat-header {{
+                background-color: #4CAF50;
+                color: white;
+                padding: 15px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                height: 60px;
+            }}
+            
+            .chat-messages {{
+                flex-grow: 1;
+                padding: 15px;
+                overflow-y: auto;
+                background-color: #f5f5f5;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                height: calc(100% - 120px);
+            }}
+            
+            .chat-input-area {{
+                display: flex;
+                padding: 10px;
+                border-top: 1px solid #e0e0e0;
+                background-color: white;
+                height: 60px;
+            }}
+            
+            .chat-input-field {{
+                flex-grow: 1;
+                padding: 10px;
+                border: 1px solid #ddd;
+                border-radius: 20px;
+                margin-right: 8px;
+                outline: none;
+            }}
+            
+            .chat-send-button {{
+                background-color: #4CAF50;
+                border: none;
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+            }}
+            
+            .user-bubble {{
+                align-self: flex-end;
+                background-color: #4CAF50;
+                color: white;
+                padding: 12px;
+                border-radius: 18px;
+                max-width: 80%;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+                word-wrap: break-word;
+            }}
+            
+            .bot-bubble {{
+                align-self: flex-start;
+                background-color: white;
+                color: #333;
+                padding: 12px;
+                border-radius: 18px;
+                max-width: 80%;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+                word-wrap: break-word;
+            }}
+        </style>
+    </head>
+    <body>
+    <div id="chat-container">
+        <div class="chat-header">
+            <div>
+                <img src="https://i.ibb.co/0GG6Gx5/plant-icon.png" width="24" height="24" style="margin-right: 8px; vertical-align: middle;">
+                Farmcare AI
+            </div>
+            <div class="chat-close" onclick="closeChat()" style="cursor: pointer; font-size: 24px; font-weight: bold;">×</div>
+        </div>
+        <div class="chat-messages" id="chat-messages" style="flex-grow: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; background-color: #f5f5f5;">
+            <div class="bot-bubble" style="align-self: flex-start; background-color: white; color: #333; padding: 12px; border-radius: 18px; max-width: 80%; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
+                👋 Hi there! How can we help you today?
+            </div>
+            {"".join([
+                f'<div class="{"user-bubble" if msg["role"] == "user" else "bot-bubble"}" style="align-self: {("flex-end" if msg["role"] == "user" else "flex-start")}; background-color: {("#4CAF50" if msg["role"] == "user" else "white")}; color: {("white" if msg["role"] == "user" else "#333")}; padding: 12px; border-radius: 18px; max-width: 80%; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">{msg["content"]}</div>'
+                for msg in st.session_state.chat_history
+            ])}
+        </div>
+        <form id="chat-form" onsubmit="sendMessage(); return false;" style="margin-bottom: 0;">
+            <div class="chat-input-area" style="display: flex; padding: 10px; border-top: 1px solid #e0e0e0; background-color: white;">
+                <input type="text" id="user-input" class="chat-input-field" placeholder="Type here and press enter..." style="flex-grow: 1; padding: 10px; border: 1px solid #ddd; border-radius: 20px; margin-right: 8px; outline: none;">
+                <button type="submit" class="chat-send-button" style="background-color: #4CAF50; border: none; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="white">
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+                    </svg>
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+        // Function to close the chat window
+        function closeChat() {{
+            try {{
+                // Try both approaches for maximum compatibility
+                window.parent.location.href = window.parent.location.pathname;
+                window.top.location.href = window.top.location.pathname;
+            }} catch(e) {{
+                // Fallback if above methods fail
+                window.location.href = window.location.pathname;
+            }}
+        
+        // Function to send message to Streamlit
+        function sendMessage() {{
+            const input = document.getElementById('user-input');
+            const message = input.value.trim();
+            
+            if (message) {{
+                // Add user message to chat UI for immediate feedback
+                const messagesContainer = document.getElementById('chat-messages');
+                messagesContainer.innerHTML += `<div class="user-bubble" style="align-self: flex-end; background-color: #4CAF50; color: white; padding: 12px; border-radius: 18px; max-width: 80%; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">${{message}}</div>`;
+                
+                // Show typing indicator
+                messagesContainer.innerHTML += `<div id="typing-indicator" class="bot-bubble" style="align-self: flex-start; background-color: white; color: #333; padding: 12px; border-radius: 18px; max-width: 80%; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">Typing<span class="dot-typing">.</span><span class="dot-typing">.</span><span class="dot-typing">.</span></div>`;
+                
+                // Add CSS animation for the typing indicator
+                const styleEl = document.createElement('style');
+                styleEl.innerHTML = `
+                    @keyframes dotTyping {{
+                      0% {{ opacity: 0; }}
+                      50% {{ opacity: 1; }}
+                      100% {{ opacity: 0; }}
+                    }}
+                    .dot-typing:nth-child(1) {{ animation: dotTyping 1s infinite 0s; }}
+                    .dot-typing:nth-child(2) {{ animation: dotTyping 1s infinite 0.25s; }}
+                    .dot-typing:nth-child(3) {{ animation: dotTyping 1s infinite 0.5s; }}
+                `;
+                document.head.appendChild(styleEl);
+                
+                // Clear input
+                input.value = '';
+                
+                // Scroll to bottom
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                
+                // Redirect with the message as a parameter
+                const searchParams = new URLSearchParams(window.location.search);
+                searchParams.set('chat', 'true');
+                searchParams.set('message', message);
+                
+                // Short delay to show the typing indicator before redirecting
+                setTimeout(function() {{
+                    window.location.href = window.location.pathname + '?' + searchParams.toString();
+                }}, 300);
+            }}
+            
+            // Prevent form submission
+            return false;
+        }}
+        
+        // Auto-scroll to the bottom of messages
+        document.addEventListener('DOMContentLoaded', function() {{
+            const messagesContainer = document.getElementById('chat-messages');
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }});
+        
+        // Execute scroll on page load
+        window.onload = function() {{
+            const messagesContainer = document.getElementById('chat-messages');
+            if (messagesContainer) {{
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }}
+        }};
+    </script>
+    </body>
+    </html>
+    """
+    
+    # Display the chat window with fixed positioning to ensure it's visible
+    st.markdown("""
+        <style>
+        /* Apply to all iframes but target specifically the chat window */
+        .stComponent iframe {
+            position: fixed !important;
+            bottom: 80px !important;
+            right: 20px !important;
+            height: 500px !important;
+            width: 350px !important;
+            border: none !important;
+            border-radius: 12px !important;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3) !important;
+            z-index: 999999 !important;
+            background-color: white !important;
+            overflow: hidden !important;
+        }
+        
+        /* Make sure chat elements stay visible */
+        .chat-container, 
+        .chat-header, 
+        .message-bubble, 
+        .user-bubble, 
+        .bot-bubble {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
+        
+        /* Chat form and inputs need to be visible */
+        form[key="chat_form"] {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
 
