@@ -25,6 +25,13 @@ venv/
 ENV/
 env/
 .env
+.venv
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Backup files
+*.bak
 
 # IDE files
 .idea/

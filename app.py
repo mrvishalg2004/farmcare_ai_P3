@@ -1074,7 +1074,13 @@ def generate_fallback_treatment_plan(disease_name):
 st.set_page_config(
     page_title="🌱 Plant Disease Detection & Treatment",
     page_icon="🌿",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://github.com/mrvishalg2004/chatbot_farmcare_ai',
+        'Report a bug': 'https://github.com/mrvishalg2004/chatbot_farmcare_ai/issues',
+        'About': '# FarmCare AI\nPlant Disease Detection Tool using Vision Transformer'
+    }
 )
 
 # -----------------------------
