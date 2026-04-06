@@ -1,6 +1,6 @@
 flask
-torch==2.2.2
-torchvision==0.17.2
+torch>=2.2.2
+torchvision>=0.17.2
 numpy
 pillow
 opencv-python-headless
@@ -10,4 +10,5 @@ matplotlib
 seaborn
 streamlit>=1.32.0
 timm
+grad-cam
 python-dotenv
