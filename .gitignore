@@ -18,6 +18,6 @@ __pycache__/
 .ipynb_checkpoints
 
 # Large files
-*.pth
+# *.pth (Removed to allow Git LFS tracking)
 *.h5
 *.weights
