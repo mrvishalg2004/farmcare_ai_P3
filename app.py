@@ -36,7 +36,10 @@ import base64
 
 
 def resize_image_array(image_array, size=(224, 224)):
-    """Resize image array with OpenCV if available, otherwise PIL fallback."""
+    """Resize image array with OpenCV if available, otherwise PIL fallback.
+
+    The expected size format is (width, height), matching both OpenCV and PIL.
+    """
     if cv2 is not None:
         return cv2.resize(image_array, size)
 
@@ -49,7 +52,11 @@ def resize_image_array(image_array, size=(224, 224)):
         arr_uint8 = arr.astype(np.uint8)
 
     pil_img = Image.fromarray(arr_uint8)
-    resized = np.array(pil_img.resize(size, Image.BILINEAR))
+    try:
+        resample = Image.Resampling.BILINEAR
+    except AttributeError:
+        resample = Image.BILINEAR
+    resized = np.array(pil_img.resize(size, resample))
 
     if is_float:
         return resized.astype(np.float32) / 255.0
