@@ -593,7 +593,7 @@ CLASS_NAMES = [
 # -----------------------------
 @st.cache_resource
 def load_model():
-    model_path = "plant_disease_model_final.pth"
+    model_path = "best_plant_disease_model.pth"
     # Check if the model file exists
     if not os.path.exists(model_path):
         st.error(f"Model file '{model_path}' not found. Please make sure the model file is in the same directory as the script.")
