@@ -1,0 +1,23 @@
+# FarmCare AI GitIgnore
+
+# Environments
+.env
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# System files
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Jupyter
+.ipynb_checkpoints
+
+# Large files
+*.pth
+*.h5
+*.weights

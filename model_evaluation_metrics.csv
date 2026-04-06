@@ -1,0 +1,11 @@
+Class,Precision,Recall,F1-Score,Support
+Apple - Apple scab,0.0,0.0,0.0,5.0
+Apple - Black rot,0.0,0.0,0.0,5.0
+Apple - Cedar apple rust,0.0,0.0,0.0,5.0
+Apple - healthy,0.0,0.0,0.0,5.0
+Blueberry - healthy,0.0,0.0,0.0,5.0
+Cherry (including sour) - Powdery mildew,0.0,0.0,0.0,5.0
+Cherry (including sour) - healthy,0.0,0.0,0.0,5.0
+Corn (maize) - Cercospora leaf spot Gray leaf spot,0.0,0.0,0.0,5.0
+Corn (maize) - Common rust ,0.0,0.0,0.0,5.0
+Corn (maize) - Northern Leaf Blight,0.0,0.0,0.0,5.0
