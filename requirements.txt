@@ -1,15 +1,13 @@
 flask
-torch==2.8.0
-torchvision==0.23.0
+torch==2.2.2
+torchvision==0.17.2
 numpy
 pillow
 opencv-python-headless
-# Removed chatbot dependencies
 requests
 plotly
 matplotlib
 seaborn
 streamlit>=1.32.0
 timm
-git+https://github.com/jacobgil/pytorch-grad-cam.git
 python-dotenv
