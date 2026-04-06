@@ -10,7 +10,10 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 import plotly.express as px
 import plotly.graph_objects as go
 import os
@@ -30,6 +33,27 @@ import streamlit.components.v1 as components
 import json
 import pathlib
 import base64
+
+
+def resize_image_array(image_array, size=(224, 224)):
+    """Resize image array with OpenCV if available, otherwise PIL fallback."""
+    if cv2 is not None:
+        return cv2.resize(image_array, size)
+
+    # PIL expects uint8 for image conversion; preserve float ranges after resize.
+    arr = np.asarray(image_array)
+    is_float = np.issubdtype(arr.dtype, np.floating)
+    if is_float:
+        arr_uint8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+    else:
+        arr_uint8 = arr.astype(np.uint8)
+
+    pil_img = Image.fromarray(arr_uint8)
+    resized = np.array(pil_img.resize(size, Image.BILINEAR))
+
+    if is_float:
+        return resized.astype(np.float32) / 255.0
+    return resized
 
 # -----------------------------
 # 🌐 Multi-Language Support
@@ -668,7 +692,7 @@ def generate_gradcam_heatmap(model, image_tensor, target_class_idx, image_rgb):
                 grayscale_cam = grayscale_cam[0, :]
                 
                 rgb_img = np.array(image_rgb) / 255.0
-                rgb_img_resized = cv2.resize(rgb_img, (224, 224))
+                rgb_img_resized = resize_image_array(rgb_img, (224, 224))
                 
                 cam_image = show_cam_on_image(rgb_img_resized, grayscale_cam, use_rgb=True)
                 
@@ -708,11 +732,11 @@ def generate_alternative_heatmap(model, image_tensor, target_class_idx, image_rg
         gradients = image_tensor.grad.data
         heatmap = torch.abs(gradients).mean(dim=1).squeeze().cpu().numpy()
         heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
-        heatmap_resized = cv2.resize(heatmap, (224, 224))
+        heatmap_resized = resize_image_array(heatmap, (224, 224))
         heatmap_colored = plt.cm.jet(heatmap_resized)[:,:,:3]
         
         rgb_img = np.array(image_rgb) / 255.0
-        rgb_img_resized = cv2.resize(rgb_img, (224, 224))
+        rgb_img_resized = resize_image_array(rgb_img, (224, 224))
         
         alpha = 0.4
         cam_image = alpha * heatmap_colored + (1 - alpha) * rgb_img_resized
@@ -1757,4 +1781,3 @@ def get_fallback_response(user_input):
            "🐛 Common Problems: pests, aphids, fungus, wilting, yellow leaves\n" \
            "🌱 Garden Basics: soil health, plant diseases\n\n" \
            "Just include these keywords in your question!"
-
